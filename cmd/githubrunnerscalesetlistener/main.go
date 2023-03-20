@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -31,7 +32,10 @@ import (
 	"github.com/actions/actions-runner-controller/logging"
 	"github.com/go-logr/logr"
 	"github.com/kelseyhightower/envconfig"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/net/http/httpproxy"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 type RunnerScaleSetListenerConfig struct {
@@ -46,6 +50,7 @@ type RunnerScaleSetListenerConfig struct {
 	MinRunners                  int    `split_words:"true"`
 	RunnerScaleSetId            int    `split_words:"true"`
 	ServerRootCA                string `split_words:"true"`
+	EnablePrometheusMetrics     bool   `split_words:"true"`
 }
 
 func main() {
@@ -122,6 +127,48 @@ func run(rc RunnerScaleSetListenerConfig, logger logr.Logger) error {
 	service := NewService(ctx, autoScalerClient, kubeManager, scaleSettings, func(s *Service) {
 		s.logger = logger.WithName("service")
 	})
+
+	if rc.EnablePrometheusMetrics {
+		// Metrics Server
+		logger.Info("Starting metrics server")
+
+		reg := metrics.Registry
+		reg.MustRegister(collectors.NewBuildInfoCollector(), collectors.NewGoCollector(), GithubRunnerScaleSetListenerStartedTotal)
+
+		metricsHandler := promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{
+			ErrorHandling: promhttp.HTTPErrorOnError,
+		})
+
+		metricsMux := http.NewServeMux()
+		metricsMux.HandleFunc("/metrics", metricsHandler.ServeHTTP)
+		metricsMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`<html>
+				 <head><title>ARC Exporter</title></head>
+				 <body>
+				 <h1>ARC Exporter</h1>
+				 <p><a href='` + "/metrics" + `'>Metrics</a></p>
+				 </body>
+				 </html>`))
+		})
+
+		metricsSrv := http.Server{
+			Addr:    ":8884",
+			Handler: metricsMux,
+		}
+
+		go func() {
+			go func() {
+				<-ctx.Done()
+				metricsSrv.Shutdown(context.Background())
+			}()
+
+			if err := metricsSrv.ListenAndServe(); err != nil {
+				if !errors.Is(err, http.ErrServerClosed) {
+					logger.Error(err, "problem running metrics server")
+				}
+			}
+		}()
+	}
 
 	// Start listening for messages
 	if err = service.Start(); err != nil {

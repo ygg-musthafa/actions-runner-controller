@@ -9,6 +9,7 @@ import (
 
 	"github.com/actions/actions-runner-controller/github/actions"
 	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type ScaleSettings struct {
@@ -26,6 +27,16 @@ type Service struct {
 	settings           *ScaleSettings
 	currentRunnerCount int
 }
+
+var (
+	GithubRunnerScaleSetListenerStartedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_scale_set_listener_started_total",
+			Help: "Total count of listener started",
+		},
+		[]string{"runner_scale_set"},
+	)
+)
 
 func NewService(
 	ctx context.Context,
@@ -51,6 +62,9 @@ func NewService(
 }
 
 func (s *Service) Start() error {
+	labels := make(prometheus.Labels)
+	labels["runner_scale_set"] = s.settings.ResourceName
+	GithubRunnerScaleSetListenerStartedTotal.With(labels).Inc()
 	if s.settings.MinRunners > 0 {
 		s.logger.Info("scale to match minimal runners.")
 		err := s.scaleForAssignedJobCount(0)
