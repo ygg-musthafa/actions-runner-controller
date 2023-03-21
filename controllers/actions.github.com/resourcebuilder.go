@@ -469,3 +469,13 @@ func rulesForListenerRole(resourceNames []string) []rbacv1.PolicyRule {
 		},
 	}
 }
+
+func managerRoleBindingName(autoscalingRunnerSet *v1alpha1.AutoscalingRunnerSet) string {
+	kubeName := autoscalingRunnerSet.Labels["app.kubernetes.io/name"]
+	return fmt.Sprintf("%s-%s-manager-role-binding", autoscalingRunnerSet.Name, kubeName)
+}
+
+func managerRoleName(autoscalingRunnerSet *v1alpha1.AutoscalingRunnerSet) string {
+	kubeName := autoscalingRunnerSet.Labels["app.kubernetes.io/name"]
+	return fmt.Sprintf("%s-%s-manager-role", autoscalingRunnerSet.Name, kubeName)
+}
